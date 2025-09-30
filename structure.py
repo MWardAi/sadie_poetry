@@ -17,6 +17,10 @@ def clean_text(text: str) -> str:
 
 app = FastAPI()
 
+@app.get("/")
+async def root():
+    return {"message": "Sadie Poetry backend is alive 💙"}
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
