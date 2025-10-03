@@ -1,8 +1,3 @@
-# app.py
-# Full backend including poem generation, one-on-one, and practice endpoints.
-# WARNING: This file keeps the same OpenAI client style you provided (including the api_key field).
-# Do not commit your real API key to public repos.
-
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from openai import OpenAI
@@ -45,6 +40,13 @@ class PoemRequest(BaseModel):
 class LineRequest(BaseModel):
     line: str
 
+# =================================================
+# NEW: Pydantic model for the Poetic Learn feature
+# =================================================
+class LearnRequest(BaseModel):
+    subject: str
+    question: str
+
 # Original endpoints
 @app.post("/generate")
 async def generate_poem(request: PoemRequest):
@@ -52,7 +54,7 @@ async def generate_poem(request: PoemRequest):
         f"Write a poem in the style of {request.persona} about {request.theme}. "
         f"Use the {request.style} format. "
         "Only output the poem with a title. Do not include any commentary or explanation. "
-        "Use standard English punctuation and characters only. Avoid any non-English symbols, emojis, or special characters."
+        "Use standard English punctuation and characters only. Avoid any non-English symbols, emojis, or special characters.be creative"
     )
     completion = client.chat.completions.create(
         model="qwen/qwen3-next-80b-a3b-instruct",
@@ -113,7 +115,7 @@ async def practice_start(request: PoemRequest):
     prompt = (
         "You are an exact, careful poetry assistant. Produce exactly one original poetic line in plain ASCII, "
         f"matching type '{typ}' and theme '{theme}'. "
-        "Each time, make the line fresh and different from previous ones, with a new image, metaphor, or feeling. "
+        "Each time, make the line fresh and different from previous ones, with a new image, metaphor, or feeling , and keep the same rythm. "
         "Do NOT repeat previous lines, blanks, or words. "
         "Keep the line concise (no more than 16 words). "
         "Choose one meaningful nontrivial word (not an article, short preposition, or punctuation) and return two non-empty lines only, "
@@ -266,3 +268,71 @@ async def practice_guess(request: Request):
         "missing_word": missing_word,
         "next_line": next_line
     }
+
+# =================================================
+# NEW: Endpoints for the Poetic Learn feature
+# =================================================
+
+@app.post("/learn")
+async def poetic_learn(request: LearnRequest):
+    """
+    Generates a poetic explanation for a given subject and question.
+    """
+    prompt = (
+        "You are Sadie, a wise and creative poet who explains complex topics through beautiful, accessible verse. "
+        "A student is learning about the subject of '{subject}'. Their specific question is: '{question}'.\n\n"
+        "Your task is to answer their question in the form of a clear, accurate, and elegant poem. "
+        "The poem should be easy to understand but also artistically crafted, using metaphors and imagery to make the concept memorable. "
+        "Structure the poem into a few short stanzas.\n\n"
+        "Constraints:\n"
+        "1. The answer must be factually correct.\n"
+        "2. The language must be poetic and engaging.\n"
+        "3. Output ONLY the poem itself. Do not include a title, introduction, or any commentary."
+    )
+    
+    try:
+        completion = client.chat.completions.create(
+            model="qwen/qwen3-next-80b-a3b-instruct",
+            messages=[
+                {"role": "system", "content": "You are a poetic educator named Sadie, skilled at explaining complex topics with verse."},
+                {"role": "user", "content": prompt.format(subject=request.subject, question=request.question)}
+            ],
+            max_tokens=1200,
+            temperature=0.7,
+        )
+        poem_answer = clean_text(completion.choices[0].message.content)
+        return {"poem_answer": poem_answer.strip()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI generation failed: {str(e)}")
+
+@app.post("/learn/detailed")
+async def poetic_learn_detailed(request: LearnRequest):
+    """
+    Generates a more detailed poetic explanation.
+    """
+    prompt = (
+        "You are Sadie, a wise and creative poet who explains complex topics through beautiful, accessible verse. "
+        "A student requires a more detailed explanation on the subject of '{subject}'. Their question is: '{question}'.\n\n"
+        "Your task is to provide a comprehensive answer in the form of a longer, more detailed poem. "
+        "Expand on the core concepts, provide examples or analogies within the verse, and explore nuances. "
+        "The poem should be structured into multiple stanzas to create a clear narrative flow of information.\n\n"
+        "Constraints:\n"
+        "1. The answer must be factually correct and more in-depth than a basic explanation.\n"
+        "2. Use rich imagery and sophisticated poetic devices.\n"
+        "3. Output ONLY the poem itself. Do not include a title, introduction, or any commentary."
+    )
+    
+    try:
+        completion = client.chat.completions.create(
+            model="qwen/qwen3-next-80b-a3b-instruct",
+            messages=[
+                {"role": "system", "content": "You are a poetic educator named Sadie, skilled at providing deep and detailed explanations with verse."},
+                {"role": "user", "content": prompt.format(subject=request.subject, question=request.question)}
+            ],
+            max_tokens=2000, # Increased token limit for more detail
+            temperature=0.7,
+        )
+        poem_answer = clean_text(completion.choices[0].message.content)
+        return {"poem_answer": poem_answer.strip()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI generation failed: {str(e)}")
