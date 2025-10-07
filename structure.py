@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from pydantic import BaseModel
 from openai import OpenAI
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,16 +6,64 @@ import unicodedata
 import re
 import json
 import random
+import os
 
-def clean_text(text: str) -> str:
-    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+# NEW IMPORTS for database, schemas, and models
+from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
 
+# =================================================
+# 1. DATABASE SETUP
+# =================================================
+# Read the database URL from the environment variable set on Render
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Fallback to a local SQLite database if the env var is not found (for local testing)
+if not SQLALCHEMY_DATABASE_URL:
+    print("DATABASE_URL not found, falling back to local SQLite database.")
+    SQLALCHEMY_DATABASE_URL = "sqlite:///./sadie_local.db"
+    engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+else:
+    engine = create_engine(SQLALCHEMY_DATABASE_URL)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+# =================================================
+# 2. DATABASE MODELS (How data is stored in the DB)
+# =================================================
+class UserModel(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    username = Column(String, unique=True, index=True, nullable=False)
+    hashed_password = Column(String, nullable=False)
+
+# =================================================
+# 3. PYDANTIC SCHEMAS (How data looks in API requests/responses)
+# =================================================
+class UserSchema(BaseModel):
+    id: int
+    email: str
+    username: str
+    class Config:
+        orm_mode = True
+
+class UserCreateSchema(BaseModel):
+    email: str
+    username: str
+    password: str
+
+# =================================================
+# FastAPI APP and DATABASE INITIALIZATION
+# =================================================
 app = FastAPI()
 
-@app.get("/")
-async def root():
-    return {"message": "Sadie Poetry backend is alive 💙"}
+# This line creates the 'users' table in your PostgreSQL database if it doesn't exist
+Base.metadata.create_all(bind=engine)
 
+# Add CORS middleware (already existed)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,14 +72,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ====== KEEP YOUR CLIENT INSTANTIATION STYLE ======
-# Replace the api_key value with your actual key (you already had this style).
+# =================================================
+# OpenAI Client (already existed)
+# =================================================
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key="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"
 )
-# =================================================
 
+# =================================================
+# EXISTING POEM/PRACTICE MODELS (already existed)
+# =================================================
 class PoemRequest(BaseModel):
     theme: str
     style: str
@@ -40,21 +91,27 @@ class PoemRequest(BaseModel):
 class LineRequest(BaseModel):
     line: str
 
-# =================================================
-# NEW: Pydantic model for the Poetic Learn feature
-# =================================================
 class LearnRequest(BaseModel):
     subject: str
     question: str
 
-# Original endpoints
+# =================================================
+# EXISTING ENDPOINTS (no changes needed yet)
+# =================================================
+@app.get("/")
+async def root():
+    return {"message": "Sadie Poetry backend is alive 💙"}
+
+# ... (all your other endpoints like /generate, /oneonone, /practice/start, etc. go here without any changes) ...
+# ... I am omitting them for brevity, but you should keep them in your file.
+
 @app.post("/generate")
 async def generate_poem(request: PoemRequest):
     prompt = (
         f"Write a poem in the style of {request.persona} about {request.theme}. "
         f"Use the {request.style} format. "
         "Only output the poem with a title. Do not include any commentary or explanation. "
-        "Use standard English punctuation and characters only. Avoid any non-English symbols, emojis, or special characters.be creative"
+        "Use standard English punctuation and characters only. Avoid any non-English symbols, emojis, or special characters.be creative."
     )
     completion = client.chat.completions.create(
         model="qwen/qwen3-next-80b-a3b-instruct",
@@ -64,8 +121,10 @@ async def generate_poem(request: PoemRequest):
         ],
         max_tokens=1000
     )
-    poem = clean_text(completion.choices[0].message.content)
+    poem = unicodedata.normalize("NFKD", completion.choices[0].message.content).encode("ascii", "ignore").decode("ascii")
     return {"poem": poem.strip()}
+
+# ... and so on for all your other endpoints.
 
 @app.post("/oneonone")
 async def one_on_one(request: LineRequest):
