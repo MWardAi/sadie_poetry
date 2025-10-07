@@ -7,31 +7,28 @@ import re
 import json
 import random
 import os
+from datetime import datetime, timedelta
 
-# NEW IMPORTS for database, schemas, and models
+# NEW IMPORTS for database, security, and tokens
 from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
+from passlib.context import CryptContext
+from jose import JWTError, jwt
 
 # =================================================
-# 1. DATABASE SETUP
+# 1. DATABASE SETUP (from before)
 # =================================================
-# Read the database URL from the environment variable set on Render
-SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
-
-# Fallback to a local SQLite database if the env var is not found (for local testing)
-if not SQLALCHEMY_DATABASE_URL:
-    print("DATABASE_URL not found, falling back to local SQLite database.")
-    SQLALCHEMY_DATABASE_URL = "sqlite:///./sadie_local.db"
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./sadie_local.db")
+if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
     engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
 else:
     engine = create_engine(SQLALCHEMY_DATABASE_URL)
-
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 # =================================================
-# 2. DATABASE MODELS (How data is stored in the DB)
+# 2. DATABASE MODELS (from before)
 # =================================================
 class UserModel(Base):
     __tablename__ = "users"
@@ -41,7 +38,7 @@ class UserModel(Base):
     hashed_password = Column(String, nullable=False)
 
 # =================================================
-# 3. PYDANTIC SCHEMAS (How data looks in API requests/responses)
+# 3. PYDANTIC SCHEMAS (from before, with new Token schemas)
 # =================================================
 class UserSchema(BaseModel):
     id: int
@@ -55,15 +52,42 @@ class UserCreateSchema(BaseModel):
     username: str
     password: str
 
+class TokenSchema(BaseModel):
+    access_token: str
+    token_type: str
+
+# =================================================
+# 4. SECURITY & TOKEN CONFIGURATION (NEW)
+# =================================================
+# Generate a secret key. In a real production app, get this from an environment variable.
+# You can generate one using: openssl rand -hex 32
+SECRET_KEY = "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+def create_access_token(data: dict, expires_delta: timedelta | None = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
 # =================================================
 # FastAPI APP and DATABASE INITIALIZATION
 # =================================================
 app = FastAPI()
-
-# This line creates the 'users' table in your PostgreSQL database if it doesn't exist
 Base.metadata.create_all(bind=engine)
-
-# Add CORS middleware (already existed)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -72,17 +96,65 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# =================================================
-# OpenAI Client (already existed)
-# =================================================
-client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key="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"
-)
+# Dependency to get a DB session
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 # =================================================
-# EXISTING POEM/PRACTICE MODELS (already existed)
+# 5. CRUD (Create, Read, Update, Delete) HELPERS (NEW)
 # =================================================
+def get_user_by_email(db: Session, email: str):
+    return db.query(UserModel).filter(UserModel.email == email).first()
+
+def get_user_by_username(db: Session, username: str):
+    return db.query(UserModel).filter(UserModel.username == username).first()
+
+def create_user(db: Session, user: UserCreateSchema):
+    hashed_password = get_password_hash(user.password)
+    db_user = UserModel(email=user.email, username=user.username, hashed_password=hashed_password)
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+# =================================================
+# 6. AUTHENTICATION ENDPOINTS (NEW)
+# =================================================
+@app.post("/signup", response_model=UserSchema)
+def signup(user: UserCreateSchema, db: Session = Depends(get_db)):
+    db_user_email = get_user_by_email(db, email=user.email)
+    if db_user_email:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    db_user_username = get_user_by_username(db, username=user.username)
+    if db_user_username:
+        raise HTTPException(status_code=400, detail="Username already taken")
+    return create_user(db=db, user=user)
+
+@app.post("/login", response_model=TokenSchema)
+def login(form_data: UserCreateSchema, db: Session = Depends(get_db)):
+    user = get_user_by_email(db, email=form_data.email)
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.email}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+# =================================================
+# EXISTING POEM/PRACTICE MODELS AND ENDPOINTS
+# =================================================
+# ... (all your other endpoints like /generate, /oneonone, etc. remain here without any changes) ...
+# I am omitting them for brevity, but you should keep them in your file.
+
 class PoemRequest(BaseModel):
     theme: str
     style: str
@@ -94,16 +166,14 @@ class LineRequest(BaseModel):
 class LearnRequest(BaseModel):
     subject: str
     question: str
-
-# =================================================
-# EXISTING ENDPOINTS (no changes needed yet)
-# =================================================
+    
 @app.get("/")
 async def root():
     return {"message": "Sadie Poetry backend is alive 💙"}
 
-# ... (all your other endpoints like /generate, /oneonone, /practice/start, etc. go here without any changes) ...
-# ... I am omitting them for brevity, but you should keep them in your file.
+
+
+# ... and so on for all your other endpoints.
 
 @app.post("/generate")
 async def generate_poem(request: PoemRequest):
