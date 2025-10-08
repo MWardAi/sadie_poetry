@@ -87,6 +87,12 @@ class PoemSchema(BaseModel):
     class Config:
         orm_mode = True
 
+
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key="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"
+)
+
 # =================================================
 # 4. SECURITY & TOKEN CONFIGURATION (NEW)
 # =================================================
