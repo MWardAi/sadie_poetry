@@ -15,6 +15,8 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from passlib.context import CryptContext
 from jose import JWTError, jwt
+from sqlalchemy import ForeignKey, Text, DateTime, func
+from sqlalchemy.orm import relationship
 
 # =================================================
 # 1. DATABASE SETUP (from before)
@@ -37,6 +39,18 @@ class UserModel(Base):
     username = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
 
+
+class PoemModel(Base):
+    __tablename__ = "poems"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    title = Column(String, nullable=True)
+    content = Column(Text, nullable=False)
+    visibility = Column(String, default="private")  # "private" or "public"
+    likes_count = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("UserModel", backref="poems")
 # =================================================
 # 3. PYDANTIC SCHEMAS (from before, with new Token schemas)
 # =================================================
@@ -55,6 +69,23 @@ class UserCreateSchema(BaseModel):
 class TokenSchema(BaseModel):
     access_token: str
     token_type: str
+
+
+class PoemCreateSchema(BaseModel):
+    title: str | None = None
+    content: str
+    visibility: str = "private"
+
+class PoemSchema(BaseModel):
+    id: int
+    user_id: int
+    title: str | None
+    content: str
+    visibility: str
+    likes_count: int
+    created_at: datetime
+    class Config:
+        orm_mode = True
 
 # =================================================
 # 4. SECURITY & TOKEN CONFIGURATION (NEW)
@@ -121,6 +152,26 @@ def create_user(db: Session, user: UserCreateSchema):
     db.refresh(db_user)
     return db_user
 
+
+from fastapi.security import OAuth2PasswordBearer
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
+
+def get_user_by_email_obj(db: Session, email: str):
+    return db.query(UserModel).filter(UserModel.email == email).first()
+
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    from jose import JWTError, jwt
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise HTTPException(status_code=401, detail="Invalid authentication")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid authentication")
+    user = get_user_by_email_obj(db, email=email)
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
 # =================================================
 # 6. AUTHENTICATION ENDPOINTS (NEW)
 # =================================================
@@ -149,6 +200,41 @@ def login(form_data: UserCreateSchema, db: Session = Depends(get_db)):
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
+
+@app.post("/poems", response_model=PoemSchema)
+def create_poem(poem: PoemCreateSchema, db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)):
+    # limit content length server-side
+    if len(poem.content) > 10000:
+        raise HTTPException(status_code=400, detail="Poem too long")
+    db_poem = PoemModel(
+        user_id=current_user.id,
+        title=(poem.title or None),
+        content=poem.content,
+        visibility=poem.visibility
+    )
+    db.add(db_poem)
+    db.commit()
+    db.refresh(db_poem)
+    return db_poem
+
+@app.get("/poems", response_model=list[PoemSchema])
+def list_my_poems(skip: int = 0, limit: int = 50, db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)):
+    poems = db.query(PoemModel).filter(PoemModel.user_id == current_user.id).order_by(PoemModel.created_at.desc()).offset(skip).limit(limit).all()
+    return poems
+
+@app.get("/public/poems", response_model=list[PoemSchema])
+def list_public_poems(skip: int = 0, limit: int = 50, db: Session = Depends(get_db)):
+    poems = db.query(PoemModel).filter(PoemModel.visibility == "public").order_by(PoemModel.likes_count.desc()).offset(skip).limit(limit).all()
+    return poems
+
+@app.get("/poems/{poem_id}", response_model=PoemSchema)
+def get_poem(poem_id: int, db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)):
+    poem = db.query(PoemModel).filter(PoemModel.id == poem_id).first()
+    if poem is None:
+        raise HTTPException(status_code=404, detail="Poem not found")
+    if poem.visibility == "private" and poem.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return poem
 # =================================================
 # EXISTING POEM/PRACTICE MODELS AND ENDPOINTS
 # =================================================
