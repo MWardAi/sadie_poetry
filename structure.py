@@ -88,6 +88,40 @@ class PoemSchema(BaseModel):
         orm_mode = True
 
 
+from pydantic import BaseModel
+
+class LoginSchema(BaseModel):
+    username: str
+    password: str
+
+import re
+import unicodedata
+from html import unescape
+
+def clean_text(text: str) -> str:
+    """
+    Normalize and sanitize freeform text for storage/display:
+    - convert to str and unescape HTML entities
+    - normalize unicode (NFKC)
+    - remove NULL/control chars
+    - collapse repeated whitespace to single space
+    - strip leading/trailing whitespace
+    """
+    if text is None:
+        return ""
+    # Ensure string and unescape HTML entities
+    s = unescape(str(text))
+    # Unicode normalization
+    s = unicodedata.normalize("NFKC", s)
+    # Remove C0 control characters (except newline, tab)
+    s = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", s)
+    # Remove any remaining non-printable characters
+    s = "".join(ch for ch in s if unicodedata.category(ch)[0] != "C")
+    # Collapse whitespace and normalize newlines to single spaces
+    s = re.sub(r"\s+", " ", s)
+    return s.strip()
+
+
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key="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"
