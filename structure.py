@@ -90,9 +90,7 @@ class PoemSchema(BaseModel):
 
 from pydantic import BaseModel
 
-class LoginSchema(BaseModel):
-    username: str
-    password: str
+
 
 import re
 import unicodedata
@@ -225,8 +223,14 @@ def signup(user: UserCreateSchema, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Username already taken")
     return create_user(db=db, user=user)
 
+# Replace the existing login(...) definition with this
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
 @app.post("/login", response_model=TokenSchema)
-def login(form_data: UserCreateSchema, db: Session = Depends(get_db)):
+def login(form_data: LoginRequest, db: Session = Depends(get_db)):
     user = get_user_by_email(db, email=form_data.email)
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
