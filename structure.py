@@ -51,6 +51,21 @@ class PoemModel(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("UserModel", backref="poems")
+
+
+class WhisperModel(Base):
+    __tablename__ = "whispers"
+    id = Column(Integer, primary_key=True, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    recipient_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    poem_content = Column(Text, nullable=False)
+    is_read = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships to get user objects if needed
+    sender = relationship("UserModel", foreign_keys=[sender_id])
+    recipient = relationship("UserModel", foreign_keys=[recipient_id])
+
 # =================================================
 # 3. PYDANTIC SCHEMAS (from before, with new Token schemas)
 # =================================================
@@ -86,6 +101,16 @@ class PoemSchema(BaseModel):
     created_at: datetime
     class Config:
         orm_mode = True
+
+class WhisperSchema(BaseModel):
+    id: int
+    # We don't include sender_id for anonymity
+    poem_content: str
+    is_read: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 from pydantic import BaseModel
