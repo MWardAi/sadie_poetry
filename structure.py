@@ -126,6 +126,11 @@ class WhisperCreateSchema(BaseModel):
     recipient_id: int
     poem_content: str
 
+# NEW: Schema for the response when fetching received whispers
+class ReceivedWhispersResponse(BaseModel):
+    whispers: list[WhisperSchema]
+    unread_count: int
+
 from pydantic import BaseModel
 
 
@@ -702,3 +707,42 @@ def send_whisper(
     db.commit()
 
     return {"message": "Whisper sent successfully"}
+
+
+
+# Endpoint to get all whispers received by the current user
+@app.get("/whispers/received", response_model=ReceivedWhispersResponse)
+def get_received_whispers(db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)):
+    """
+    Fetches all whispers for the logged-in user and counts how many are unread.
+    """
+    whispers = db.query(WhisperModel).filter(WhisperModel.recipient_id == current_user.id).order_by(WhisperModel.created_at.desc()).all()
+    unread_count = sum(1 for whisper in whispers if not whisper.is_read)
+    
+    return {"whispers": whispers, "unread_count": unread_count}
+
+
+# Endpoint to mark a whisper as read
+@app.post("/whispers/{whisper_id}/read", status_code=200)
+def mark_whisper_as_read(
+    whisper_id: int,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user)
+):
+    """
+    Marks a specific whisper as read.
+    Ensures that only the recipient can perform this action.
+    """
+    db_whisper = db.query(WhisperModel).filter(WhisperModel.id == whisper_id).first()
+
+    if not db_whisper:
+        raise HTTPException(status_code=404, detail="Whisper not found")
+
+    if db_whisper.recipient_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to mark this whisper as read")
+
+    if not db_whisper.is_read:
+        db_whisper.is_read = True
+        db.commit()
+
+    return {"message": "Whisper marked as read"}
