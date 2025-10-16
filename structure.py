@@ -112,6 +112,19 @@ class WhisperSchema(BaseModel):
     class Config:
         from_attributes = True
 
+# NEW: Schema for listing users in the recipient list
+class UserListSchema(BaseModel):
+    id: int
+    username: str
+
+    class Config:
+        from_attributes = True
+
+
+# NEW: Schema for the body of the "send whisper" request
+class WhisperCreateSchema(BaseModel):
+    recipient_id: int
+    poem_content: str
 
 from pydantic import BaseModel
 
@@ -638,3 +651,54 @@ async def poetic_learn_detailed(request: LearnRequest):
         return {"poem_answer": poem_answer.strip()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI generation failed: {str(e)}")
+
+
+// ...existing code...
+# ... (your /login endpoint code) ...
+
+
+# =================================================
+# 7. WHISPER ENDPOINTS (NEW)
+# =================================================
+
+# Endpoint to get a list of all users (to select a recipient)
+@app.get("/users", response_model=list[UserListSchema])
+def get_all_users(db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)):
+    """
+    Provides a list of all users so the sender can choose a recipient.
+    The current user is excluded from the list.
+    """
+    users = db.query(UserModel).filter(UserModel.id != current_user.id).all()
+    return users
+
+
+# Endpoint to send a whisper
+@app.post("/whispers/send", status_code=201)
+def send_whisper(
+    whisper_data: WhisperCreateSchema,
+    db: Session = Depends(get_db),
+    sender: UserModel = Depends(get_current_user)
+):
+    """
+    Creates a new whisper in the database.
+    The sender is identified by their auth token.
+    """
+    # Verify the recipient user exists
+    recipient = db.query(UserModel).filter(UserModel.id == whisper_data.recipient_id).first()
+    if not recipient:
+        raise HTTPException(status_code=404, detail="Recipient user not found")
+
+    # Prevent a user from sending a whisper to themselves
+    if sender.id == whisper_data.recipient_id:
+        raise HTTPException(status_code=400, detail="Cannot send a whisper to yourself")
+
+    # Create the new whisper record
+    db_whisper = WhisperModel(
+        sender_id=sender.id,
+        recipient_id=whisper_data.recipient_id,
+        poem_content=whisper_data.poem_content
+    )
+    db.add(db_whisper)
+    db.commit()
+
+    return {"message": "Whisper sent successfully"}
