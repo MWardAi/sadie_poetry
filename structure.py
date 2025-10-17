@@ -658,7 +658,6 @@ async def poetic_learn_detailed(request: LearnRequest):
         raise HTTPException(status_code=500, detail=f"AI generation failed: {str(e)}")
 
 
-// ...existing code...
 # ... (your /login endpoint code) ...
 
 
