@@ -287,6 +287,30 @@ def get_poem(poem_id: int, db: Session = Depends(get_db), current_user: UserMode
         raise HTTPException(status_code=403, detail="Forbidden")
     return poem
 
+# NEW: Endpoint to delete a poem
+@app.delete("/poems/{poem_id}", status_code=200)
+def delete_poem(
+    poem_id: int,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user)
+):
+    """
+    Deletes a poem owned by the current user.
+    """
+    db_poem = db.query(PoemModel).filter(PoemModel.id == poem_id).first()
+
+    if not db_poem:
+        raise HTTPException(status_code=404, detail="Poem not found")
+
+    # Security check: Ensure the user owns the poem they are trying to delete.
+    if db_poem.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this poem")
+
+    db.delete(db_poem)
+    db.commit()
+
+    return {"message": "Poem deleted successfully"}
+
 # --- WHISPER ENDPOINTS ---
 @app.get("/users", response_model=list[UserListSchema])
 def get_all_users(db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)):
