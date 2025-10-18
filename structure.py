@@ -58,6 +58,7 @@ class UserModel(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     username = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
+    poetry_score = Column(Integer, default=0, nullable=False) 
 
 class PoemModel(Base):
     __tablename__ = "poems"
@@ -88,6 +89,7 @@ class UserSchema(BaseModel):
     id: int
     email: str
     username: str
+    poetry_score: int
     class Config:
         from_attributes = True # CORRECTED: Standardized to Pydantic v2 syntax
 
@@ -127,6 +129,7 @@ class WhisperSchema(BaseModel):
 class UserListSchema(BaseModel):
     id: int
     username: str
+    poetry_score: int
     class Config:
         from_attributes = True
 
@@ -430,3 +433,21 @@ async def practice_guess(request: Request):
             "missing_word": missing,
             "next_line": "The harbour keeps the night's small, honest lights."
         }
+# NEW: Endpoint to increment a user's score
+@app.post("/practice/increment_score", status_code=200)
+def increment_score(db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)):
+    """
+    Safely increments the current user's poetry score by 1.
+    """
+    current_user.poetry_score = (current_user.poetry_score or 0) + 1
+    db.commit()
+    return {"message": "Score updated", "new_score": current_user.poetry_score}
+
+# NEW: Endpoint to get the leaderboard
+@app.get("/leaderboard", response_model=list[UserListSchema])
+def get_leaderboard(db: Session = Depends(get_db)):
+    """
+    Returns a list of all users, ordered by their poetry score in descending order.
+    """
+    leaderboard_users = db.query(UserModel).order_by(UserModel.poetry_score.desc()).all()
+    return leaderboard_users
